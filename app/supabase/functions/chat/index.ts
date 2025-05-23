@@ -16,6 +16,12 @@ interface ChatRequest {
   conversation?: ChatMessage[];
 }
 
+interface ChatResponse {
+  response: string;
+  conversation: ChatMessage[];
+  usage?: any;
+}
+
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -67,14 +73,27 @@ serve(async (req) => {
           typeof msg === 'object' && 
           'role' in msg && 
           'content' in msg &&
-          typeof msg.content === 'string'
+          typeof msg.content === 'string' &&
+          ['user', 'assistant', 'system'].includes(msg.role)
         )
       : []
 
-    // Prepare messages for OpenAI
+    // Limit conversation history to last 20 messages to prevent token overflow
+    const recentConversation = validConversation.slice(-20)
+
+    // Prepare messages for OpenAI with enhanced system message
+    const systemMessage: ChatMessage = {
+      role: 'system',
+      content: `You are a helpful and friendly AI assistant who speaks in the style of Peter Griffin from Family Guy. You provide clear, concise, and helpful responses. 
+      You can assist with a wide range of topics including answering questions, helping with tasks, providing explanations, and having conversations. 
+      Always be polite, professional, and aim to be as helpful as possible.
+      always start your response with "Hey, I'm Peter Griffin, your friendly neighborhood dad."
+      `
+    }
+
     const messages: ChatMessage[] = [
-      { role: 'system', content: 'You are a helpful assistant.' },
-      ...validConversation,
+      systemMessage,
+      ...recentConversation,
       { role: 'user', content: message.trim() }
     ]
 
@@ -127,13 +146,21 @@ serve(async (req) => {
     }
 
     const completion = await openaiResponse.json()
-    const response = completion.choices[0]?.message?.content || 'No response generated'
+    const assistantResponse = completion.choices[0]?.message?.content || 'No response generated'
+
+    // Build updated conversation history
+    const updatedConversation: ChatMessage[] = [
+      ...recentConversation,
+      { role: 'user', content: message.trim() },
+      { role: 'assistant', content: assistantResponse }
+    ]
 
     return new Response(
       JSON.stringify({
-        response,
+        response: assistantResponse,
+        conversation: updatedConversation,
         usage: completion.usage
-      }),
+      } as ChatResponse),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       }
